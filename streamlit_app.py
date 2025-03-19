@@ -4,9 +4,10 @@ import random
 import pandas as pd
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
+import time
 
 # Set page configuration - MUST BE THE FIRST STREAMLIT COMMAND
 st.set_page_config(
@@ -305,6 +306,34 @@ if 'display_order' not in st.session_state:
     # Randomize which model appears first (left) and second (right)
     st.session_state.display_order = random.sample(["A", "B"], 2)
 
+# Add rate limiting variables to session state
+if 'request_timestamps' not in st.session_state:
+    st.session_state.request_timestamps = []
+    
+if 'rate_limit_count' not in st.session_state:
+    st.session_state.rate_limit_count = 5  # Maximum requests allowed
+    
+if 'rate_limit_period' not in st.session_state:
+    st.session_state.rate_limit_period = 3600  # Time period in seconds (1 hour)
+
+# Add this function to check rate limits
+def check_rate_limit():
+    """Check if the user has exceeded rate limits"""
+    # Remove timestamps older than the rate limit period
+    current_time = time.time()
+    st.session_state.request_timestamps = [
+        timestamp for timestamp in st.session_state.request_timestamps 
+        if current_time - timestamp < st.session_state.rate_limit_period
+    ]
+    
+    # Check if user has exceeded rate limit
+    if len(st.session_state.request_timestamps) >= st.session_state.rate_limit_count:
+        return False
+    
+    # Add current timestamp and allow request
+    st.session_state.request_timestamps.append(current_time)
+    return True
+
 # Helper functions
 def record_vote(winner):
     success = record_vote_in_supabase(winner, st.session_state.prompt)
@@ -335,6 +364,11 @@ with st.form("prompt_form"):
         # Check API key before making request
         if not OPENROUTER_API_KEY:
             st.error("Cannot proceed: API key is missing. Please add your OpenRouter API key.")
+        elif not check_rate_limit():
+            st.error(f"Rate limit exceeded. You can only make {st.session_state.rate_limit_count} requests per {st.session_state.rate_limit_period//3600} hour(s).")
+            if st.session_state.request_timestamps:
+                next_reset = st.session_state.rate_limit_period - (time.time() - st.session_state.request_timestamps[0])
+                st.info(f"You can make another request in approximately {int(next_reset//60)} minutes.")
         else:
             with st.spinner("Getting responses from both models..."):
                 # Get responses from both models
